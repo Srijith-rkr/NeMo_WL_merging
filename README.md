@@ -28,6 +28,7 @@ You can also to refer [data/NeMo_generated/generating_data_with_Nemo_backend.py]
 ## Training LLaMA-2 model 
 
 [This](https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/llama2peft.html) tutorial is very helpful on setting up the LLaMA-2 model for training. 
+**I will be adding more details tomorrow**
 
 ## Inference with LLaMA-2 model 
 
