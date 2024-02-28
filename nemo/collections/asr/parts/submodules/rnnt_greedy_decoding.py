@@ -654,7 +654,7 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
             # Get max sequence length
             max_out_len = out_len.max()
             for time_idx in range(max_out_len):
-                f = x.narrow(dim=1, start=time_idx, length=1)  # [B, 1, D]
+                f = x.narrow(dim=1, start=time_idx, length=1)  # [B, 1, D] ; selects the dims for each timestep
 
                 # Prepare t timestamp batch variables
                 not_blank = True
@@ -690,7 +690,14 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                         logp = logp.float()
 
                     # Get index k, of max prob for batch
-                    v, k = logp.max(1)
+                    #v, k = logp.max(1)
+                    
+                    k  = torch.distributions.categorical.Categorical(logits=logp/1.4).sample()
+                    v = torch.tensor([], device=k.device, dtype=k.dtype)
+                    
+                    for i in range(len(k)):
+                        v = torch.cat( (v, torch.tensor([logp[i,k[i]]], device=k.device )) , 0)
+                
                     del g
 
                     # Update blank mask with current predicted blanks
