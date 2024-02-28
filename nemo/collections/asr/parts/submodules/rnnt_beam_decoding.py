@@ -77,6 +77,64 @@ def _states_to_device(dec_state, device='cpu'):
 
     return dec_state
 
+def find_duplicates(lst):
+    seen = set()
+    duplicates = set()
+
+    for item in lst:
+        if item in seen:
+            duplicates.add(item)
+        else:
+            seen.add(item)
+
+    return list(duplicates)
+
+def convert_format(lst):
+    op = ''
+    for i in lst:
+        op = op + '_' + str(i)
+    return op
+    
+
+def remove_same_squences(input):
+    
+    sequences= []
+    to_remove = []
+    inc_index = 0 
+    
+    for x in input:
+        sequences.append(convert_format(x.y_sequence))
+    
+    if len(set(sequences)) != len(sequences): # There are duplicate elements 
+        
+        # print('from')
+        # for i in range(len(input)):
+        #     print(input[i].y_sequence)
+        
+        
+        duplicates = find_duplicates(sequences)
+        
+        for j in duplicates: 
+            positions = [index for index, value in enumerate(sequences) if value == j]
+            max_score =  max([input[x].score for x in positions])
+            to_remove.append([ x for x in positions if input[x].score != max_score])
+                      
+        #to_remove.sort()
+        for i in to_remove:
+            input.pop(i[0] - inc_index)
+            inc_index = inc_index + 1
+            
+        # print('to---')
+        # for i in range(len(input)):
+        #     print(input[i].y_sequence)
+        
+            
+        return input
+            
+    
+    else : return input
+    
+
 
 class BeamRNNTInfer(Typing):
     """
@@ -257,7 +315,7 @@ class BeamRNNTInfer(Typing):
             logging.info("Beam size of 1 was used, switching to sample level `greedy_search`")
             self.search_algorithm = self.greedy_search
         elif search_type == "default":
-            self.search_algorithm = self.default_beam_search
+            self.search_algorithm = self.default_beam_search # Srijith Have to change this to add your function
         elif search_type == "tsd":
             self.search_algorithm = self.time_sync_decoding
         elif search_type == "alsd":
@@ -371,12 +429,12 @@ class BeamRNNTInfer(Typing):
         with torch.no_grad():
             # Apply optional preprocessing
             encoder_output = encoder_output.transpose(1, 2)  # (B, T, D)
-
+            # [1, 512, 65] -> [1, 65, 512] ; batch , timestep, dimensions
             self.decoder.eval()
             self.joint.eval()
 
             hypotheses = []
-            with tqdm(
+            with tqdm(                      # Even with batches the method still iterates per datapoint
                 range(encoder_output.size(0)),
                 desc='Beam search progress:',
                 total=encoder_output.size(0),
@@ -391,7 +449,7 @@ class BeamRNNTInfer(Typing):
                     dtype = _p.dtype
 
                     # Decode every sample in the batch independently.
-                    for batch_idx in idx_gen:
+                    for batch_idx in idx_gen: # Encoded length is used to extract parts of the beam
                         inseq = encoder_output[batch_idx : batch_idx + 1, : encoded_lengths[batch_idx], :]  # [1, T, D]
                         logitlen = encoded_lengths[batch_idx]
 
@@ -545,7 +603,7 @@ class BeamRNNTInfer(Typing):
         blank_tensor = torch.tensor([self.blank], device=h.device, dtype=torch.long)
 
         # Precompute some constants for blank position
-        ids = list(range(self.vocab_size + 1))
+        ids = list(range(self.vocab_size + 1)) # a list 0 ... 1024
         ids.remove(self.blank)
 
         # Used when blank token is first vs last token
@@ -555,7 +613,7 @@ class BeamRNNTInfer(Typing):
             index_incr = 0
 
         # Initialize zero vector states
-        dec_state = self.decoder.initialize_state(h)
+        dec_state = self.decoder.initialize_state(h) # [    [1,1,640],  [1,1,640]   ] 640 is Hidden size of RNN
 
         # Initialize first hypothesis for the beam (blank)
         kept_hyps = [Hypothesis(score=0.0, y_sequence=[self.blank], dec_state=dec_state, timestep=[-1], length=0)]
@@ -570,13 +628,15 @@ class BeamRNNTInfer(Typing):
         if self.preserve_alignments:
             kept_hyps[0].alignments = [[]]
 
-        for i in range(int(encoded_lengths)):
-            hi = h[:, i : i + 1, :]  # [1, 1, D]
-            hyps = kept_hyps
-            kept_hyps = []
+        for i in range(int(encoded_lengths)): # h is the encoder embeddings; B, L, D (1,65,512)
+            hi = h[:, i : i + 1, :]  # [1, 1, D] # dims of each timestep
 
-            while True:
-                max_hyp = max(hyps, key=lambda x: x.score)
+            hyps = kept_hyps # hyps is a temp var
+            kept_hyps = []
+    
+
+            while True: 
+                max_hyp = max(hyps, key=lambda x: x.score) # get best hyp from the ones predicted in the last round
                 hyps.remove(max_hyp)
 
                 # update decoder state and get next score
@@ -584,23 +644,23 @@ class BeamRNNTInfer(Typing):
 
                 # get next token
                 ytu = torch.log_softmax(self.joint.joint(hi, y) / self.softmax_temperature, dim=-1)  # [1, 1, 1, V + 1]
-                ytu = ytu[0, 0, 0, :]  # [V + 1]
+                ytu = ytu[0, 0, 0, :]  # [V + 1] Probably the token probabilities
 
                 # preserve alignments
                 if self.preserve_alignments:
                     logprobs = ytu.cpu().clone()
 
                 # remove blank token before top k
-                top_k = ytu[ids].topk(beam_k, dim=-1)
+                top_k = ytu[ids].topk(beam_k, dim=-1) # selects the top 20 tokens 
 
                 # Two possible steps - blank token or non-blank token predicted
                 ytu = (
-                    torch.cat((top_k[0], ytu[self.blank].unsqueeze(0))),
-                    torch.cat((top_k[1] + index_incr, blank_tensor)),
+                    torch.cat((top_k[0], ytu[self.blank].unsqueeze(0))), # top_k[0] is the log values-> You are adding that with blanks log values 
+                    torch.cat((top_k[1] + index_incr, blank_tensor)), #  read index_incr code when you come here
                 )
 
                 # for each possible step
-                for logp, k in zip(*ytu):
+                for logp, k in zip(*ytu): # k is the token index here and logp is the log probability of that token 
                     # construct hypothesis for step
                     new_hyp = Hypothesis(
                         score=(max_hyp.score + float(logp)),
@@ -609,7 +669,7 @@ class BeamRNNTInfer(Typing):
                         lm_state=max_hyp.lm_state,
                         timestep=max_hyp.timestep[:],
                         length=encoded_lengths,
-                    )
+                    ) # Only logp has been added to score - everything else remains same 
 
                     if self.preserve_alignments:
                         new_hyp.alignments = copy.deepcopy(max_hyp.alignments)
@@ -639,6 +699,7 @@ class BeamRNNTInfer(Typing):
                 # keep those hypothesis that have scores greater than next search generation
                 hyps_max = float(max(hyps, key=lambda x: x.score).score)
                 kept_most_prob = sorted([hyp for hyp in kept_hyps if hyp.score > hyps_max], key=lambda x: x.score,)
+              #  keep_most_prob = remove_same_squences(kept_most_prob)
 
                 # If enough hypothesis have scores greater than next search generation,
                 # stop beam search.
